@@ -2,11 +2,14 @@ export const attendanceLabels = {
   P: "Present",
   A: "Absent",
   L: "Late",
-  N: "Not enrolled",
 };
 export function countMarks(students, marks) {
-  const counts = { P: 0, A: 0, L: 0, N: 0, unmarked: 0 };
-  for (const student of students) counts[marks[student.id] || "unmarked"]++;
+  const counts = { P: 0, A: 0, L: 0, unmarked: 0 };
+  for (const student of students) {
+    const mark = marks[student.id];
+    if (mark === "N") continue; // Historical exclusions are neither selectable nor unmarked.
+    counts[Object.hasOwn(attendanceLabels, mark) ? mark : "unmarked"]++;
+  }
   return counts;
 }
 const sameMarks = (a, b) =>
@@ -32,7 +35,14 @@ export function editReducer(state, action) {
     };
   }
   if (action.type === "edit") {
-    const marks = { ...state.marks, ...action.changes };
+    const changes = Object.fromEntries(
+      Object.entries(action.changes).filter(
+        ([id, status]) =>
+          state.marks[id] !== "N" &&
+          (status === "" || Object.hasOwn(attendanceLabels, status)),
+      ),
+    );
+    const marks = { ...state.marks, ...changes };
     if (sameMarks(marks, state.marks)) return state;
     return {
       ...state,
@@ -52,7 +62,7 @@ export function parseAttendancePaste(text, remainingRows) {
     );
   const values = normalized.split("\n").map((v) => v.trim().toUpperCase());
   if (values.some((v) => v && !(v in attendanceLabels)))
-    throw new Error("Only P, A, L, N, or blank cells are accepted.");
+    throw new Error("Only P, A, L, or blank cells are accepted.");
   if (values.length > remainingRows)
     throw new Error(
       "The pasted column exceeds the remaining visible students. Nothing has been changed.",

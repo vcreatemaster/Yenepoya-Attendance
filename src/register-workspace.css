@@ -72,10 +72,9 @@
 }
 .workspace-controls {
   display: grid;
-  grid-template-columns: minmax(130px, 0.8fr) minmax(190px, 1.6fr) 150px minmax(
-      230px,
-      1.1fr
-    ) auto;
+  grid-template-columns:
+    minmax(130px, 0.8fr) minmax(190px, 1.6fr) 150px minmax(230px, 1.1fr)
+    auto;
   gap: 12px;
   padding: 10px 18px;
   align-items: end;
@@ -389,11 +388,6 @@
   background: #895c00;
   border-color: #895c00;
 }
-.status-choice.N.chosen {
-  color: #fff;
-  background: #506078;
-  border-color: #506078;
-}
 .clear-mark {
   display: grid;
   place-items: center;
@@ -484,10 +478,9 @@
 }
 @media (max-width: 1150px) {
   .workspace-controls {
-    grid-template-columns: minmax(110px, 0.8fr) minmax(160px, 1fr) 135px minmax(
-        210px,
-        1fr
-      ) auto;
+    grid-template-columns:
+      minmax(110px, 0.8fr) minmax(160px, 1fr) 135px minmax(210px, 1fr)
+      auto;
     gap: 8px;
     padding-inline: 12px;
   }
@@ -659,5 +652,120 @@
   }
   .workspace-footer {
     padding-block: 6px;
+  }
+}
+
+/* Keep the active register compact; wide historical grids remain opt-in. */
+.workspace-table.entry-view {
+  max-width: 1000px;
+  margin-inline: auto;
+}
+.workspace-table.entry-view .pinned-student {
+  width: 48%;
+  min-width: 0;
+  max-width: none;
+}
+.workspace-table.entry-view th:last-child,
+.workspace-table.entry-view td:last-child {
+  width: 52%;
+  min-width: 0;
+}
+.status-choice {
+  width: auto;
+  min-width: 64px;
+  min-height: 40px;
+  padding: 5px 8px;
+}
+.status-choice.chosen {
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.clear-mark {
+  min-height: 40px;
+}
+.mark-counts {
+  flex-wrap: wrap;
+}
+.count-unmarked {
+  font-weight: 700;
+  background: #fff2cf;
+  padding: 4px 7px;
+  border-radius: 4px;
+}
+.legacy-note {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #526783;
+  background: #f4f6fa;
+}
+.mark.N {
+  width: auto;
+  height: auto;
+  padding: 6px;
+  font-size: 11px;
+}
+@media (max-width: 900px) {
+  .workspace-header .save-indicator {
+    display: inline;
+  }
+  .workspace-context > div:first-child {
+    flex-wrap: wrap;
+  }
+  .mark-counts {
+    flex-shrink: 1;
+    gap: 8px;
+  }
+}
+@media (max-width: 640px) {
+  .workspace-header .button-row {
+    gap: 6px;
+  }
+  .workspace-header .save-indicator {
+    font-size: 11px;
+  }
+  .workspace-table.entry-view .pinned-student {
+    width: 40%;
+    position: static;
+  }
+  .workspace-table.entry-view th:last-child,
+  .workspace-table.entry-view td:last-child {
+    width: 60%;
+    padding-inline: 3px;
+    white-space: normal;
+  }
+  .workspace-table.entry-view .register-student > span {
+    display: none;
+  }
+  .attendance-entry {
+    gap: 3px;
+    padding-inline: 0;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .status-choice {
+    min-width: 0;
+    padding: 5px;
+    font-size: 11px;
+    min-height: 44px;
+  }
+  .clear-mark {
+    width: 24px;
+  }
+  .workspace-guidance strong {
+    white-space: normal;
+    font-size: 12px;
+  }
+}
+
+.workspace-table.entry-view thead th {
+  white-space: normal;
+}
+.status-choice {
+  width: 82px;
+  padding-inline: 4px;
+}
+@media (max-width: 640px) {
+  .status-choice {
+    width: 56px;
   }
 }

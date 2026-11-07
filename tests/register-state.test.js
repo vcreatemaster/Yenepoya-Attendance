@@ -57,18 +57,17 @@ test("counts cover the full roster and exclude stale student IDs", () => {
         99: "P",
       },
     ),
-    { P: 1, A: 1, L: 1, N: 1, unmarked: 2 },
+    { P: 1, A: 1, L: 1, unmarked: 2 },
   );
 });
 
 test("paste preserves blank rows and normalizes Excel line endings", () => {
-  assert.deepEqual(parseAttendancePaste("\r\np\r\n\r\n a \r\nl\r\nn\r\n", 6), [
+  assert.deepEqual(parseAttendancePaste("\r\np\r\n\r\n a \r\nl\r\n", 5), [
     "",
     "P",
     "",
     "A",
     "L",
-    "N",
   ]);
 });
 
@@ -77,4 +76,15 @@ test("paste refuses extra columns, invalid values and row overflow without trunc
   assert.throws(() => parseAttendancePaste("P\nAbsent", 2), /Only P/);
   assert.throws(() => parseAttendancePaste("P\nA\nL", 2), /exceeds/);
   assert.throws(() => parseAttendancePaste("", 2), /empty/);
+});
+
+test("new N input is rejected and legacy exclusions cannot be changed by bulk edits", () => {
+  assert.throws(() => parseAttendancePaste("P\nN", 2), /Only P/);
+  const state = loaded({ 1: "N", 2: "A" });
+  const edited = editReducer(state, {
+    type: "edit",
+    changes: { 1: "P", 2: "L", 3: "N" },
+  });
+  assert.deepEqual(edited.marks, { 1: "N", 2: "L" });
+  assert.deepEqual(editReducer(edited, { type: "undo" }).marks, state.marks);
 });

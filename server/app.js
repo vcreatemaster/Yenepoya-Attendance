@@ -1,3 +1,4 @@
+import { timetableRoutes, scheduledAccess } from "./timetable.js";
 import express from "express";
 import multer from "multer";
 import { z } from "zod";
@@ -206,6 +207,7 @@ export function createApp(db) {
       (s) => !ownIds || ownIds.has(s.id),
     );
   };
+  timetableRoutes(app, db, admin);
   staffRoutes(app, db, admin);
   studentReportRoutes(app, db, admin);
   staffImportRoutes(app, db, admin);
@@ -326,7 +328,14 @@ export function createApp(db) {
     res.json({ ok: true });
   });
   app.get("/api/attendance", (req, res) => {
-    const subject = subjectAccess(req, id.parse(req.query.subject_id));
+    const scheduled = req.query.scheduled_session_id
+      ? scheduledAccess(db, req.user, req.query.scheduled_session_id)
+      : null;
+    const subject = scheduled
+      ? db
+          .prepare("SELECT * FROM subjects WHERE id=?")
+          .get(scheduled.subject_id)
+      : subjectAccess(req, id.parse(req.query.subject_id));
     const students = db
       .prepare(
         "SELECT id,name,campus_id,registration_number FROM students WHERE class_id=? AND status='active' ORDER BY name",
@@ -339,16 +348,21 @@ export function createApp(db) {
       .prepare(
         "SELECT * FROM teaching_sessions WHERE subject_id=? ORDER BY date,period",
       )
-      .all(subject.id);
+      .all(subject.id)
+      .filter((s) => !scheduled || s.scheduled_session_id === scheduled.id);
     const marks = db
       .prepare(
         "SELECT m.* FROM marks m JOIN teaching_sessions ts ON ts.id=m.session_id WHERE ts.subject_id=?",
       )
       .all(subject.id)
-      .filter((m) => students.some((s) => s.id === m.student_id));
-    res.json({ subject, students, sessions, marks });
+      .filter(
+        (m) =>
+          students.some((s) => s.id === m.student_id) &&
+          sessions.some((s) => s.id === m.session_id),
+      );
+    res.json({ subject, students, sessions, marks, scheduled });
   });
-  app.post("/api/attendance/sessions", (req, res) => {
+  app.post("/api/attendance/sessions", admin, (req, res) => {
     const b = z
       .object({
         subject_id: id,
@@ -380,7 +394,7 @@ export function createApp(db) {
           .array(
             z.object({
               student_id: id,
-              status: z.enum(["P", "A", "L", "N", ""]),
+              status: z.enum(["P", "A", "L", ""]),
             }),
           )
           .max(2000),
@@ -392,7 +406,33 @@ export function createApp(db) {
         .prepare("SELECT * FROM teaching_sessions WHERE id=?")
         .get(id.parse(req.params.id));
       if (!session) fail(404, "Session not found.");
-      const subject = subjectAccess(req, session.subject_id, true);
+      const scheduled = session.scheduled_session_id
+        ? scheduledAccess(
+            db,
+            req.user,
+            session.scheduled_session_id,
+            !isAdmin(req.user),
+          )
+        : null;
+      if (
+        scheduled &&
+        scheduled.state !== "scheduled" &&
+        b.state !== "cancelled"
+      )
+        fail(
+          400,
+          "This scheduled occurrence is cancelled. Use an explicit schedule exception before reopening attendance.",
+        );
+      if (!scheduled && !isAdmin(req.user))
+        fail(
+          403,
+          "Legacy attendance is read-only for faculty. Open an authorized class from your timetable.",
+        );
+      const subject = scheduled
+        ? db
+            .prepare("SELECT * FROM subjects WHERE id=?")
+            .get(session.subject_id)
+        : subjectAccess(req, session.subject_id, true);
       if (session.revision !== b.revision)
         fail(
           409,
@@ -406,6 +446,10 @@ export function createApp(db) {
           403,
           "This session is locked. An administrator must provide a correction reason.",
         );
+      if (scheduled && b.state === "cancelled" && !b.reason)
+        fail(400, "A reason is required to cancel a scheduled class.");
+      if (b.state === "cancelled" && !isAdmin(req.user))
+        fail(403, "Only administrators can cancel scheduled classes.");
       if (b.state === "submitted" && session.date > today())
         fail(400, "Future sessions cannot be submitted.");
       const studentIds = db
@@ -417,21 +461,35 @@ export function createApp(db) {
         b.marks.some((m) => !studentIds.includes(m.student_id))
       )
         fail(400, "Invalid or duplicate student in attendance.");
+      const before = db
+        .prepare("SELECT student_id,status FROM marks WHERE session_id=?")
+        .all(session.id);
+      const legacyIds = new Set(
+        before.filter((m) => m.status === "N").map((m) => m.student_id),
+      );
+      if (b.marks.some((m) => legacyIds.has(m.student_id)))
+        fail(
+          400,
+          "Legacy N records are read-only and must be omitted from attendance changes.",
+        );
       if (
         b.state === "submitted" &&
         (!studentIds.length ||
           studentIds.some(
-            (s) => !b.marks.some((m) => m.student_id === s && m.status),
+            (s) =>
+              !legacyIds.has(s) &&
+              !b.marks.some((m) => m.student_id === s && m.status),
           ))
       )
         fail(
           400,
-          "Mark every active student before submitting. Use N only for students not enrolled in this session.",
+          "Mark every eligible student Present, Absent or Late before submitting.",
         );
-      const before = db
-        .prepare("SELECT student_id,status FROM marks WHERE session_id=?")
-        .all(session.id);
-      db.prepare("DELETE FROM marks WHERE session_id=?").run(session.id);
+      // Preserve historical exclusions and records outside the current active roster.
+      const remove = db.prepare(
+        "DELETE FROM marks WHERE session_id=? AND student_id=? AND status != 'N'",
+      );
+      for (const studentId of studentIds) remove.run(session.id, studentId);
       for (const m of b.marks)
         if (m.status)
           db.prepare("INSERT INTO marks VALUES(?,?,?)").run(
@@ -442,9 +500,20 @@ export function createApp(db) {
       db.prepare(
         "UPDATE teaching_sessions SET state=?,revision=revision+1 WHERE id=?",
       ).run(b.state, session.id);
+      if (scheduled && b.state === "cancelled") {
+        db.prepare(
+          "UPDATE scheduled_sessions SET state='cancelled',change_type='cancelled',reason=?,revision=revision+1 WHERE id=?",
+        ).run(b.reason, scheduled.id);
+        audit(db, req.user, "schedule.attendance_cancel", scheduled.id, {
+          reason: b.reason,
+          attendance_id: session.id,
+        });
+      }
       audit(db, req.user, "attendance.save", session.id, {
         before,
-        after: b.marks,
+        after: db
+          .prepare("SELECT student_id,status FROM marks WHERE session_id=?")
+          .all(session.id),
         state: b.state,
         reason: b.reason || "",
       });

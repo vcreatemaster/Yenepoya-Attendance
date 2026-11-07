@@ -1,0 +1,238 @@
+.schedule-panel {
+  background: #fff;
+  border: 1px solid #dce5ef;
+  border-radius: 10px;
+  padding: 18px;
+  margin-block: 18px;
+}
+.schedule-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.schedule-heading h2 {
+  font-size: 18px;
+  margin: 0 0 5px;
+}
+.schedule-heading small,
+.schedule-session small,
+.timetable-grid small {
+  display: block;
+  color: #526783;
+  font-size: 12px;
+}
+.schedule-session {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 14px 10px;
+  border-bottom: 1px solid #dce5ef;
+  align-items: center;
+}
+.schedule-time {
+  min-width: 105px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.schedule-description {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 150px;
+  font-size: 13px;
+}
+.schedule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.schedule-actions .button {
+  font-size: 12px;
+}
+.next-session {
+  border-left: 3px solid #196bb1;
+  background: #f0f6ff;
+}
+.cancelled-session {
+  background: #f7f8fa;
+  color: #58677b;
+}
+.revision-label {
+  color: #815400;
+  font-weight: 600;
+  font-size: 12px;
+}
+.schedule-empty {
+  padding: 14px 0;
+  font-size: 13px;
+  color: #526783;
+}
+.published-week {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.schedule-day {
+  border: 1px solid #dce5ef;
+  border-radius: 7px;
+  padding: 10px;
+  min-width: 0;
+}
+.schedule-day h3 {
+  font-size: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #dce5ef;
+}
+.schedule-day .schedule-session {
+  display: grid;
+  gap: 8px;
+}
+.timetable-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr)) 90px;
+  gap: 12px;
+}
+.timetable-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  font-size: 13px;
+}
+.timetable-toolbar .field {
+  margin: 0;
+}
+.timetable-grid-wrap {
+  overflow: auto;
+  border: 1px solid #cedcec;
+  border-radius: 8px;
+  background: white;
+}
+.timetable-grid {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 780px;
+  table-layout: fixed;
+}
+.timetable-grid td,
+.timetable-grid th {
+  border: 1px solid #dce5ef;
+  padding: 8px;
+  vertical-align: top;
+  text-align: left;
+  font-size: 13px;
+}
+.timetable-grid th {
+  background: #f0f5fc;
+}
+.timetable-cell {
+  width: 100%;
+  min-height: 90px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  text-align: left;
+  padding: 8px;
+  border-radius: 6px;
+  color: #224468;
+}
+.timetable-cell:not(:disabled):hover {
+  background: #eaf3ff;
+  outline: 1px solid #7ca3d0;
+}
+.timetable-cell:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.timetable-break {
+  color: #667080;
+  padding: 12px;
+  background: #f6f7f9;
+}
+.timetable-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.timetable-error {
+  background: #fff0ef;
+  border: 1px solid #ecc4c0;
+  color: #922c28;
+  padding: 12px;
+  border-radius: 6px;
+  margin-block: 10px;
+  font-size: 13px;
+}
+.period-editor {
+  display: grid;
+  gap: 12px;
+}
+.period-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: end;
+  border-bottom: 1px solid #dce5ef;
+  padding-bottom: 8px;
+}
+.period-row label {
+  display: grid;
+  font-size: 12px;
+  gap: 4px;
+  flex: 1;
+  min-width: 70px;
+}
+.period-row input,
+.period-row select {
+  width: 100%;
+  padding: 8px;
+}
+.publication-preview {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  padding: 10px;
+  background: #f4f7fb;
+  margin-block: 12px;
+}
+@media (max-width: 1000px) {
+  .timetable-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .published-week {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .published-week {
+    display: block;
+  }
+  .schedule-day {
+    margin-bottom: 12px;
+  }
+  .schedule-panel {
+    padding: 12px;
+  }
+  .schedule-heading .button-row {
+    flex-wrap: wrap;
+  }
+  .schedule-session {
+    align-items: start;
+  }
+  .schedule-actions {
+    width: 100%;
+  }
+  .timetable-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+  .schedule-description {
+    min-width: 120px;
+  }
+  .timetable-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}

@@ -153,7 +153,7 @@ test("authentication, CSRF header, and data isolation", async () => {
   assert.equal(cross.status, 403);
 });
 test("subject write access, full submission, lock, audit and stale version protection", async () => {
-  const created = await request("teacher", "/attendance/sessions", "POST", {
+  const created = await request("admin", "/attendance/sessions", "POST", {
     subject_id: 1,
     date: "2026-01-10",
     period: 1,
@@ -181,7 +181,7 @@ test("subject write access, full submission, lock, audit and stale version prote
     403,
   );
   const incomplete = await request(
-    "teacher",
+    "admin",
     `/attendance/sessions/${sid}`,
     "PUT",
     {
@@ -191,7 +191,7 @@ test("subject write access, full submission, lock, audit and stale version prote
     },
   );
   assert.equal(incomplete.status, 400);
-  const save = await request("teacher", `/attendance/sessions/${sid}`, "PUT", {
+  const save = await request("admin", `/attendance/sessions/${sid}`, "PUT", {
     revision: 0,
     state: "submitted",
     marks: [
@@ -279,7 +279,7 @@ test("percentages exclude planned sessions, drafts, unmarked cells, N, cancellat
   assert.equal(p.percentage, 66.7);
 });
 test("future submissions, duplicate sessions, invalid marks and invalid dates are rejected", async () => {
-  const future = await request("teacher", "/attendance/sessions", "POST", {
+  const future = await request("admin", "/attendance/sessions", "POST", {
     subject_id: 1,
     date: "2099-01-01",
     period: 1,
@@ -287,25 +287,20 @@ test("future submissions, duplicate sessions, invalid marks and invalid dates ar
   assert.equal(future.status, 200);
   assert.equal(
     (
-      await request(
-        "teacher",
-        `/attendance/sessions/${future.body.id}`,
-        "PUT",
-        {
-          revision: 0,
-          state: "submitted",
-          marks: [
-            { student_id: 1, status: "P" },
-            { student_id: 2, status: "P" },
-          ],
-        },
-      )
+      await request("admin", `/attendance/sessions/${future.body.id}`, "PUT", {
+        revision: 0,
+        state: "submitted",
+        marks: [
+          { student_id: 1, status: "P" },
+          { student_id: 2, status: "P" },
+        ],
+      })
     ).status,
     400,
   );
   assert.equal(
     (
-      await request("teacher", "/attendance/sessions", "POST", {
+      await request("admin", "/attendance/sessions", "POST", {
         subject_id: 1,
         date: "2099-01-01",
         period: 1,
@@ -315,7 +310,7 @@ test("future submissions, duplicate sessions, invalid marks and invalid dates ar
   );
   assert.equal(
     (
-      await request("teacher", "/attendance/sessions", "POST", {
+      await request("admin", "/attendance/sessions", "POST", {
         subject_id: 1,
         date: "2026-02-30",
         period: 1,
@@ -325,16 +320,11 @@ test("future submissions, duplicate sessions, invalid marks and invalid dates ar
   );
   assert.equal(
     (
-      await request(
-        "teacher",
-        `/attendance/sessions/${future.body.id}`,
-        "PUT",
-        {
-          revision: 0,
-          state: "draft",
-          marks: [{ student_id: 3, status: "P" }],
-        },
-      )
+      await request("admin", `/attendance/sessions/${future.body.id}`, "PUT", {
+        revision: 0,
+        state: "draft",
+        marks: [{ student_id: 3, status: "P" }],
+      })
     ).status,
     400,
   );
@@ -478,7 +468,7 @@ test("calendar holiday prevents sessions for the applicable class", async () => 
   );
   assert.equal(
     (
-      await request("teacher", "/attendance/sessions", "POST", {
+      await request("admin", "/attendance/sessions", "POST", {
         subject_id: 1,
         date: "2026-12-25",
         period: 1,
@@ -815,7 +805,7 @@ test("staff profiles support multiple subjects and faculty access stays subject-
     ).status,
     403,
   );
-  const session = await request("faculty", "/attendance/sessions", "POST", {
+  const session = await request("admin", "/attendance/sessions", "POST", {
     subject_id: s1,
     date: "2026-01-15",
     period: 1,
@@ -823,16 +813,11 @@ test("staff profiles support multiple subjects and faculty access stays subject-
   assert.equal(session.status, 200);
   assert.equal(
     (
-      await request(
-        "faculty",
-        `/attendance/sessions/${session.body.id}`,
-        "PUT",
-        {
-          revision: 0,
-          state: "draft",
-          marks: [{ student_id: 1, status: "P" }],
-        },
-      )
+      await request("admin", `/attendance/sessions/${session.body.id}`, "PUT", {
+        revision: 0,
+        state: "draft",
+        marks: [{ student_id: 1, status: "P" }],
+      })
     ).status,
     200,
   );
@@ -1178,4 +1163,88 @@ test("student reports include attendance and leave history with role-scoped acce
       .get(String(studentId)).n,
     1,
   );
+});
+
+test("three-status API preserves legacy N, rejects new N, and requires explicit marks", async () => {
+  db.exec(
+    "INSERT INTO classes(id,course_id,admission_year,section,semester,advisor_id) VALUES(90,1,2026,'Legacy',1,2); INSERT INTO subjects(id,class_id,name,code,semester,teacher_id) VALUES(90,90,'Legacy checks','LEG',1,2); INSERT INTO students(id,campus_id,name,class_id) VALUES(901,'LEG1','Legacy student',90),(902,'LEG2','Current student',90);",
+  );
+  const sid = Number(
+    db
+      .prepare(
+        "INSERT INTO teaching_sessions(subject_id,date,period) VALUES(90,'2026-01-02',19)",
+      )
+      .run().lastInsertRowid,
+  );
+  db.prepare("INSERT INTO marks VALUES(?,901,'N')").run(sid);
+  const save = (marks, state = "draft", revision = 0, user = "admin", reason) =>
+    request(user, `/attendance/sessions/${sid}`, "PUT", {
+      marks,
+      state,
+      revision,
+      reason,
+    });
+  assert.equal((await save([{ student_id: 902, status: "N" }])).status, 400);
+  assert.equal((await save([{ student_id: 901, status: "P" }])).status, 400);
+  assert.equal((await save([{ student_id: 901, status: "" }])).status, 400);
+  assert.equal(
+    (await save([{ student_id: 902, status: "" }], "submitted")).status,
+    400,
+  );
+  assert.equal((await save([{ student_id: 902, status: "L" }])).status, 200);
+  let data = (await request("teacher", "/attendance?subject_id=90")).body;
+  assert.equal(
+    data.marks.find((m) => m.session_id === sid && m.student_id === 901).status,
+    "N",
+  );
+  assert.equal(
+    data.marks.find((m) => m.session_id === sid && m.student_id === 902).status,
+    "L",
+  );
+  assert.equal(
+    (await save([{ student_id: 902, status: "P" }], "submitted", 1)).status,
+    200,
+  );
+  assert.equal(
+    (await save([{ student_id: 902, status: "A" }], "submitted", 2, "teacher"))
+      .status,
+    403,
+  );
+  assert.equal(
+    (
+      await save(
+        [{ student_id: 902, status: "A" }],
+        "submitted",
+        2,
+        "admin",
+        "Verified correction",
+      )
+    ).status,
+    200,
+  );
+  const detail = JSON.parse(
+    db
+      .prepare(
+        "SELECT detail FROM audit WHERE action='attendance.save' AND entity=? ORDER BY id DESC",
+      )
+      .get(String(sid)).detail,
+  );
+  assert.equal(detail.before.find((m) => m.student_id === 901).status, "N");
+  assert.equal(detail.after.find((m) => m.student_id === 901).status, "N");
+  const exported = await fetch(
+    base + "/api/attendance/export?subject_id=90&month=2026-01",
+    { headers: { Cookie: cookies.admin } },
+  );
+  assert.equal(exported.status, 200);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(await exported.arrayBuffer()));
+  let legacyVisible = false;
+  workbook.eachSheet((sheet) =>
+    sheet.eachRow((row) =>
+      row.eachCell((cell) => {
+        if (cell.value === "N") legacyVisible = true;
+      }),
+    ),
+  );
+  assert.equal(legacyVisible, true);
 });

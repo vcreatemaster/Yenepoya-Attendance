@@ -12,7 +12,13 @@ import {
   Save,
   X,
 } from "lucide-react";
-import { api, admin, dateLabel } from "./api";
+import { api, admin } from "./api";
+const dateLabel = (date) =>
+  new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 import {
   attendanceLabels,
   countMarks,
@@ -30,14 +36,31 @@ export default function RegisterWorkspace({
   notify,
   navigate,
   ui,
+  attendanceTarget,
 }) {
   const { Modal, Form, Field, Select, Empty } = ui;
-  const subjects = boot.subjects.filter((s) => s.class_id === +classId);
-  const [subjectId, setSubjectId] = useState(String(subjects[0]?.id || ""));
-  const [month, setMonth] = useState(boot.today.slice(0, 7));
+  const subjects = attendanceTarget
+    ? [attendanceTarget.subject_record]
+    : boot.subjects.filter((s) => s.class_id === +classId);
+  const rememberedSubject = () => {
+    if (attendanceTarget) return String(attendanceTarget.subject_id);
+    try {
+      const saved = localStorage.getItem(
+        `attendance-subject:${user.id}:${classId}`,
+      );
+      if (subjects.some((s) => String(s.id) === saved)) return saved;
+    } catch {}
+    return String(subjects[0]?.id || "");
+  };
+  const [subjectId, setSubjectId] = useState(rememberedSubject);
+  const [month, setMonth] = useState(
+    (attendanceTarget?.date || boot.today).slice(0, 7),
+  );
   const [data, setData] = useState(null),
     [loadError, setLoadError] = useState("");
-  const [selected, setSelected] = useState(null),
+  const [selected, setSelected] = useState(
+      attendanceTarget?.attendance_id || null,
+    ),
     [focusMode, setFocusMode] = useState(true),
     [historyView, setHistoryView] = useState(false);
   const [search, setSearch] = useState(""),
@@ -70,8 +93,8 @@ export default function RegisterWorkspace({
     };
   }, []);
   useEffect(() => {
-    setSubjectId(String(subjects[0]?.id || ""));
-    setSelected(null);
+    setSubjectId(rememberedSubject());
+    setSelected(attendanceTarget?.attendance_id || null);
     setData(null);
     setActiveStudent(null);
     dispatch({ type: "load", marks: {} });
@@ -93,7 +116,11 @@ export default function RegisterWorkspace({
     let cancelled = false;
     setLoadError("");
     setData(null);
-    api("/attendance?subject_id=" + subjectId)
+    api(
+      attendanceTarget
+        ? "/attendance?scheduled_session_id=" + attendanceTarget.id
+        : "/attendance?subject_id=" + subjectId,
+    )
       .then((d) => {
         if (cancelled) return;
         setData(d);
@@ -137,15 +164,23 @@ export default function RegisterWorkspace({
       window.removeEventListener("before-navigation", beforeNavigation);
     };
   }, []);
-  const cls = boot.classes.find((c) => c.id === +classId);
+  const cls =
+    attendanceTarget?.class_record ||
+    boot.classes.find((c) => c.id === +classId);
   const subject = subjects.find((s) => s.id === +subjectId);
   const session = data?.sessions.find((s) => s.id === selected);
   const locked = !!session && session.state !== "draft";
   const canWrite =
-    admin(user) || (user.role === "teacher" && subject?.teacher_id === user.id);
+    admin(user) ||
+    (user.role === "teacher" &&
+      data?.scheduled?.faculty_id === user.id &&
+      data?.scheduled?.state === "scheduled" &&
+      !data?.scheduled?.holiday);
   const canEdit = !!session && canWrite && (!locked || admin(user)) && !saving;
   const students = data?.students || [];
   const counts = countMarks(students, edit.marks);
+  const eligibleCount = counts.P + counts.A + counts.L + counts.unmarked;
+  const hasLegacy = students.some((s) => edit.marks[s.id] === "N");
   const sessions =
     data?.sessions.filter((s) => !month || s.date.startsWith(month)) || [];
   const visibleSessions = historyView ? sessions : session ? [session] : [];
@@ -215,7 +250,7 @@ export default function RegisterWorkspace({
     if (header) grid.current.scrollLeft = Math.max(0, header.offsetLeft - 310);
   }, [selected, historyView]);
   const change = (id, status) => {
-    if (canEdit) {
+    if (canEdit && edit.marks[id] !== "N") {
       const index = filtered.findIndex((s) => s.id === id);
       const disappears =
         filter !== "all" &&
@@ -234,7 +269,12 @@ export default function RegisterWorkspace({
       ?.querySelector(`[data-entry="${id}"]`)
       ?.focus({ preventScroll: false });
   const keyboard = (e, student, index) => {
-    if (!canEdit) return;
+    if (
+      !canEdit ||
+      dialog ||
+      e.target.closest("input, textarea, select, [contenteditable=true]")
+    )
+      return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
       dispatch({ type: "undo" });
@@ -242,7 +282,7 @@ export default function RegisterWorkspace({
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const key = e.key.toUpperCase();
-    if (["P", "A", "L", "N", "BACKSPACE", "DELETE"].includes(key)) {
+    if (["P", "A", "L", "BACKSPACE", "DELETE"].includes(key)) {
       e.preventDefault();
       change(student.id, ["BACKSPACE", "DELETE"].includes(key) ? "" : key);
     }
@@ -253,13 +293,26 @@ export default function RegisterWorkspace({
     }
   };
   const paste = (e, index) => {
-    if (!canEdit) return;
+    if (
+      !canEdit ||
+      dialog ||
+      e.target.closest("input, textarea, select, [contenteditable=true]")
+    )
+      return;
     e.preventDefault();
     try {
       const values = parseAttendancePaste(
         e.clipboardData.getData("text"),
         filtered.length - index,
       );
+      if (
+        filtered
+          .slice(index, index + values.length)
+          .some((s) => edit.marks[s.id] === "N")
+      )
+        throw new Error(
+          "This paste includes a read-only legacy record. Paste only into eligible rows.",
+        );
       setDialog({
         type: "paste",
         rows: values.map((status, i) => ({
@@ -272,12 +325,15 @@ export default function RegisterWorkspace({
     }
   };
   const save = async (state) => {
-    if (!session || saving) return;
+    if (!session || busy.current) return;
+    busy.current = true;
     setSaving(true);
-    const payload = students.map((s) => ({
-      student_id: s.id,
-      status: edit.marks[s.id] || "",
-    }));
+    const payload = students
+      .filter((s) => edit.marks[s.id] !== "N")
+      .map((s) => ({
+        student_id: s.id,
+        status: edit.marks[s.id] || "",
+      }));
     try {
       await api("/attendance/sessions/" + session.id, {
         method: "PUT",
@@ -289,7 +345,12 @@ export default function RegisterWorkspace({
           s.id === session.id ? { ...s, state, revision: s.revision + 1 } : s,
         ),
         marks: [
-          ...current.marks.filter((m) => m.session_id !== session.id),
+          ...current.marks.filter(
+            (m) =>
+              m.session_id !== session.id ||
+              m.status === "N" ||
+              !students.some((s) => s.id === m.student_id),
+          ),
           ...payload
             .filter((m) => m.status)
             .map((m) => ({ ...m, session_id: session.id })),
@@ -315,6 +376,7 @@ export default function RegisterWorkspace({
     } catch (error) {
       notify(error.message);
     } finally {
+      busy.current = false;
       setSaving(false);
     }
   };
@@ -336,13 +398,15 @@ export default function RegisterWorkspace({
             <button
               className="icon-button"
               disabled={saving}
-              onClick={() => navigate("overview")}
+              onClick={() =>
+                navigate(attendanceTarget ? "timetable" : "overview")
+              }
               aria-label="Back to overview"
             >
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h1>Attendance register</h1>
+              <h1>Take Attendance</h1>
               <span>
                 {cls
                   ? `${cls.course} · ${cls.section} · ${cls.admission_year}`
@@ -362,7 +426,9 @@ export default function RegisterWorkspace({
                   ? "Unsaved changes"
                   : savedAt
                     ? `Saved ${savedAt}`
-                    : "No unsaved changes"}
+                    : session?.state === "draft"
+                      ? "Draft saved"
+                      : "No unsaved changes"}
             </span>
             <button
               className="button"
@@ -378,12 +444,15 @@ export default function RegisterWorkspace({
           <Select
             label="Class"
             value={classId}
-            disabled={saving}
+            disabled={saving || !!attendanceTarget}
             onChange={(e) => {
               if (guard()) setClassId(e.target.value);
             }}
           >
-            {boot.classes.map((c) => (
+            {(attendanceTarget
+              ? [attendanceTarget.class_record]
+              : boot.classes
+            ).map((c) => (
               <option key={c.id} value={c.id}>
                 {c.course} · {c.section} · {c.admission_year}
               </option>
@@ -392,11 +461,17 @@ export default function RegisterWorkspace({
           <Select
             label="Subject"
             value={subjectId}
-            disabled={saving}
+            disabled={saving || !!attendanceTarget}
             onChange={(e) => {
               if (guard()) {
                 resetSelection();
                 setSubjectId(e.target.value);
+                try {
+                  localStorage.setItem(
+                    `attendance-subject:${user.id}:${classId}`,
+                    e.target.value,
+                  );
+                } catch {}
               }
             }}
           >
@@ -410,7 +485,7 @@ export default function RegisterWorkspace({
             label="Month"
             type="month"
             value={month}
-            disabled={saving}
+            disabled={saving || !!attendanceTarget}
             onChange={(e) => {
               if (guard()) {
                 resetSelection();
@@ -427,7 +502,7 @@ export default function RegisterWorkspace({
             <option value="">Select date & period</option>
             {sessions.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.date} · Period {s.period} ·{" "}
+                {dateLabel(s.date)} · Period {s.period} ·{" "}
                 {s.state === "imported" ? "recorded" : s.state}
               </option>
             ))}
@@ -441,20 +516,22 @@ export default function RegisterWorkspace({
               <p>
                 <b>Advisor:</b> {cls?.advisor || "Unassigned"}
               </p>
-              {user.role !== "student" && subjectId && (
-                <a
-                  className="button"
-                  href={
-                    "/api/attendance/export?subject_id=" +
-                    subjectId +
-                    (month ? "&month=" + encodeURIComponent(month) : "")
-                  }
-                >
-                  <Download size={16} />
-                  Export saved Excel
-                </a>
-              )}
-              {canWrite && subjectId && (
+              {user.role !== "student" &&
+                subjectId &&
+                (admin(user) || subject?.teacher_id === user.id) && (
+                  <a
+                    className="button"
+                    href={
+                      "/api/attendance/export?subject_id=" +
+                      subjectId +
+                      (month ? "&month=" + encodeURIComponent(month) : "")
+                    }
+                  >
+                    <Download size={16} />
+                    Export saved Excel
+                  </a>
+                )}
+              {admin(user) && subjectId && !attendanceTarget && (
                 <button
                   className="button"
                   disabled={saving}
@@ -470,9 +547,18 @@ export default function RegisterWorkspace({
                 </button>
               )}
               <p>
-                P = present · A = absent · L = late · N = not enrolled. Drafts
-                and unmarked cells do not count towards percentages.
+                P = present · A = absent · L = late. Drafts and unmarked cells
+                do not count towards percentages.
               </p>
+              <details>
+                <summary>Keyboard shortcuts</summary>
+                <p>
+                  Focus a student’s attendance controls: P = Present, A =
+                  Absent, L = Late. ↑ / ↓ moves between students. Delete clears
+                  a mark; Ctrl / ⌘ + Z undoes. Shortcuts are inactive in text
+                  fields and dialogs.
+                </p>
+              </details>
               {admin(user) && session && (
                 <button
                   className="button danger"
@@ -489,7 +575,7 @@ export default function RegisterWorkspace({
           <div>
             <strong>
               {session
-                ? `${session.date} · Period ${session.period}`
+                ? `${dateLabel(session.date)} · Period ${session.period}`
                 : "Choose a session to begin"}
             </strong>
             {session && (
@@ -499,26 +585,34 @@ export default function RegisterWorkspace({
                     <LockKeyhole size={12} />{" "}
                     {session.state === "imported" ? "Recorded" : session.state}
                   </>
-                ) : (
+                ) : counts.unmarked ? (
                   "Draft · editable"
+                ) : (
+                  "Draft · ready for review"
                 )}
               </span>
             )}
-            <span className="workspace-subject">{subject?.name}</span>
+            <span className="workspace-subject">
+              {subject?.name}
+              {attendanceTarget
+                ? ` · ${attendanceTarget.faculty} · ${attendanceTarget.start}–${attendanceTarget.end}`
+                : ""}
+            </span>
           </div>
           {session && (
             <div className="mark-counts" aria-label="Session counts">
               <span className="count-present">
-                P <b>{counts.P}</b>
+                Present <b>{counts.P}</b>
               </span>
               <span className="count-absent">
-                A <b>{counts.A}</b>
+                Absent <b>{counts.A}</b>
               </span>
               <span>
-                L <b>{counts.L}</b>
+                Late <b>{counts.L}</b>
               </span>
               <span>
-                N <b>{counts.N}</b>
+                {eligibleCount - counts.unmarked} of {eligibleCount} eligible
+                marked
               </span>
               <span className={counts.unmarked ? "count-unmarked" : ""}>
                 Unmarked <b>{counts.unmarked}</b>
@@ -554,9 +648,9 @@ export default function RegisterWorkspace({
           >
             <option value="all">All students</option>
             <option value="unmarked">Unmarked only</option>
+            <option value="P">Present only</option>
             <option value="A">Absent only</option>
             <option value="L">Late only</option>
-            <option value="N">Not enrolled only</option>
           </select>
           <span className="visible-count">
             {filtered.length} / {students.length} students
@@ -576,7 +670,7 @@ export default function RegisterWorkspace({
                 disabled={!counts.unmarked}
                 onClick={() => setDialog({ type: "fill" })}
               >
-                Fill unmarked as P
+                Mark all present
               </button>
               <button
                 className="button"
@@ -595,6 +689,12 @@ export default function RegisterWorkspace({
           tabIndex={0}
           aria-label="Scrollable attendance grid"
         >
+          {hasLegacy && (
+            <p className="legacy-note">
+              Legacy N means Not enrolled. These historical records are
+              read-only and excluded from marking totals and percentages.
+            </p>
+          )}
           {loadError ? (
             <div className="empty">
               <p role="alert">{loadError}</p>
@@ -649,15 +749,21 @@ export default function RegisterWorkspace({
                           {dateLabel(s.date)} · P{s.period}
                         </b>
                         <small>
-                          {s.id === selected ? "ACTIVE SESSION" : s.state}
+                          {historyView
+                            ? s.id === selected
+                              ? "ACTIVE SESSION"
+                              : s.state
+                            : "Present · Absent · Late"}
                         </small>
                       </button>
                     </th>
                   ))}
-                  <th>
-                    Recorded attendance
-                    <small>All recorded sessions for this subject</small>
-                  </th>
+                  {historyView && (
+                    <th>
+                      Recorded attendance
+                      <small>All recorded sessions for this subject</small>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -695,7 +801,7 @@ export default function RegisterWorkspace({
                             key={t.id}
                             className={active ? "editing-column" : ""}
                           >
-                            {active && canEdit ? (
+                            {active && canEdit && v !== "N" ? (
                               <div
                                 className="attendance-entry"
                                 data-entry={s.id}
@@ -720,7 +826,10 @@ export default function RegisterWorkspace({
                                       title={label}
                                       onClick={() => change(s.id, code)}
                                     >
-                                      {code}
+                                      <span aria-hidden="true">
+                                        {v === code ? "✓ " : ""}
+                                      </span>
+                                      {label}
                                     </button>
                                   ),
                                 )}
@@ -737,34 +846,43 @@ export default function RegisterWorkspace({
                             ) : (
                               <span
                                 className={"mark " + (v || "blank")}
-                                aria-label={attendanceLabels[v] || "Unmarked"}
+                                aria-label={
+                                  v === "N"
+                                    ? "Legacy N — Not enrolled (read-only)"
+                                    : attendanceLabels[v] || "Unmarked"
+                                }
                               >
-                                {v || "—"}
+                                {v === "N"
+                                  ? "Legacy N · Not enrolled"
+                                  : v || "—"}
                               </span>
                             )}
                           </td>
                         );
                       })}
-                      <td>
-                        <span
-                          className={
-                            "percentage " +
-                            (stats.total &&
-                            (stats.attended / stats.total) * 100 <
-                              boot.threshold
-                              ? "low"
-                              : "")
-                          }
-                        >
-                          {stats.total
-                            ? Math.round((stats.attended / stats.total) * 100) +
-                              "%"
-                            : "—"}
-                        </span>
-                        <small>
-                          {stats.attended} / {stats.total}
-                        </small>
-                      </td>
+                      {historyView && (
+                        <td>
+                          <span
+                            className={
+                              "percentage " +
+                              (stats.total &&
+                              (stats.attended / stats.total) * 100 <
+                                boot.threshold
+                                ? "low"
+                                : "")
+                            }
+                          >
+                            {stats.total
+                              ? Math.round(
+                                  (stats.attended / stats.total) * 100,
+                                ) + "%"
+                              : "—"}
+                          </span>
+                          <small>
+                            {stats.attended} / {stats.total}
+                          </small>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -785,13 +903,13 @@ export default function RegisterWorkspace({
                 ? `${currentStudent.name} · ${currentStudent.campus_id}`
                 : session
                   ? canEdit
-                    ? "Choose P, A, L or N for each student."
-                    : "This session is read-only."
+                    ? "Choose Present, Absent or Late for each student."
+                    : "Read-only. Open an assigned class from your timetable to take attendance."
                   : "Your changes are saved only when you choose Save draft or Submit."}
             </strong>
             <small>
               {canEdit
-                ? "Click a labelled status, or type P / A / L / N. ↑ ↓ moves between students. Paste is previewed before applying."
+                ? "Click a labelled status, or type P / A / L. ↑ ↓ moves between students. Paste is previewed before applying."
                 : locked
                   ? "Submitted attendance requires an administrator and correction reason to change."
                   : "Select a session above. Student names and column headings stay pinned."}
@@ -860,14 +978,21 @@ export default function RegisterWorkspace({
               {cls?.course} · {cls?.section} · {subject?.name}
             </b>
             <p>
-              {session?.date} · Period {session?.period}
+              {session ? dateLabel(session.date) : ""} · Period{" "}
+              {session?.period}
             </p>
           </div>
+          {hasLegacy && (
+            <p className="legacy-note">
+              Legacy N records remain read-only and excluded from attendance
+              percentages and marking totals.
+            </p>
+          )}
           {dialog.type === "submit" && (
             <>
               <p>
                 {students.length} students · {counts.P} present · {counts.A}{" "}
-                absent · {counts.L} late · {counts.N} not enrolled.
+                absent · {counts.L} late · {counts.unmarked} unmarked.
               </p>
               <p className="muted">
                 Review absences and exceptions below. Submission locks this
@@ -876,7 +1001,7 @@ export default function RegisterWorkspace({
               </p>
               <div className="register-review-list">
                 {students
-                  .filter((s) => ["A", "L", "N"].includes(edit.marks[s.id]))
+                  .filter((s) => ["A", "L"].includes(edit.marks[s.id]))
                   .map((s) => (
                     <div key={s.id}>
                       <span>
@@ -886,8 +1011,8 @@ export default function RegisterWorkspace({
                       <b>{attendanceLabels[edit.marks[s.id]]}</b>
                     </div>
                   ))}
-                {!counts.A && !counts.L && !counts.N && (
-                  <p>All students are marked present.</p>
+                {!counts.A && !counts.L && (
+                  <p>All eligible students are marked present.</p>
                 )}
               </div>
               <button
@@ -970,7 +1095,7 @@ export default function RegisterWorkspace({
                 This session will be excluded from attendance percentages.
                 Existing marks remain in the audit history.
               </p>
-              {locked && (
+              {(locked || session?.scheduled_session_id) && (
                 <Field
                   label="Correction reason"
                   value={reason}
@@ -980,7 +1105,11 @@ export default function RegisterWorkspace({
               <div className="form-footer">
                 <button
                   className="button danger"
-                  disabled={saving || (locked && !reason.trim())}
+                  disabled={
+                    saving ||
+                    ((locked || session?.scheduled_session_id) &&
+                      !reason.trim())
+                  }
                   onClick={() => save("cancelled")}
                 >
                   Confirm cancellation

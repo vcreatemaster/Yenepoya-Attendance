@@ -253,7 +253,7 @@ export async function registerWorkbook(db, subject, selectedMonth) {
     });
     sheet.mergeCells(footerRow + 3, 1, footerRow + 3, percentageCol);
     sheet.getCell(footerRow + 3, 1).value =
-      "P: Present · A: Absent · L: Late · N: Not enrolled. Only recorded attendance counts; drafts, future/cancelled sessions, N and blanks are excluded. Repeated day numbers are separate periods (see cell notes).";
+      "P: Present · A: Absent · L: Late · Legacy N: Not enrolled (read-only). Only recorded attendance counts; drafts, future/cancelled sessions, N and blanks are excluded. Repeated day numbers are separate periods (see cell notes).";
     sheet.getCell(footerRow + 3, 1).font = {
       name: "Arial",
       size: 9,

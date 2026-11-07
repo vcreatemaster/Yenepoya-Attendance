@@ -1,3 +1,4 @@
+import Timetable, { TodayClasses } from "./Timetable";
 import React, { useEffect, useState } from "react";
 import {
   LayoutDashboard,
@@ -41,6 +42,7 @@ const icons = {
   leaves: MailCheck,
   calendar: CalendarDays,
   academics: BookOpen,
+  timetable: CalendarDays,
   notifications: Send,
   settings: Settings,
 };
@@ -52,6 +54,7 @@ const labels = {
   leaves: "Leave requests",
   calendar: "Academic calendar",
   academics: "Academic setup",
+  timetable: "Timetable",
   notifications: "Notifications",
   settings: "Settings & access",
 };
@@ -120,7 +123,7 @@ function Field({ label, ...props }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input {...props} />
+      <input aria-label={label} {...props} />
     </label>
   );
 }
@@ -128,7 +131,9 @@ function Select({ label, children, ...props }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <select {...props}>{children}</select>
+      <select aria-label={label} {...props}>
+        {children}
+      </select>
     </label>
   );
 }
@@ -248,6 +253,7 @@ export default function App() {
     [toast, setToast] = useState(""),
     [mobile, setMobile] = useState(false),
     [classId, setClassId] = useState("");
+  const [attendanceTarget, setAttendanceTarget] = useState(null);
   const refresh = () => setRevision((v) => v + 1),
     notify = (m) => {
       setToast(m);
@@ -270,14 +276,27 @@ export default function App() {
       api("/bootstrap")
         .then((d) => {
           setBoot(d);
-          setClassId((c) =>
-            d.classes.some((x) => String(x.id) === c)
-              ? c
-              : String(d.classes[0]?.id || ""),
-          );
+          setClassId((c) => {
+            let saved = "";
+            try {
+              saved = localStorage.getItem(`attendance-class:${user.id}`) || "";
+            } catch {}
+            return (
+              [c, saved].find((value) =>
+                d.classes.some((x) => String(x.id) === value),
+              ) || String(d.classes[0]?.id || "")
+            );
+          });
         })
         .catch((e) => notify(e.message));
   }, [user, revision]);
+  useEffect(() => {
+    if (user && classId) {
+      try {
+        localStorage.setItem(`attendance-class:${user.id}`, classId);
+      } catch {}
+    }
+  }, [user, classId]);
   const navigate = (p) => {
     if (
       !window.dispatchEvent(
@@ -285,9 +304,24 @@ export default function App() {
       )
     )
       return;
+    if (p !== "attendance") setAttendanceTarget(null);
     setPage(p);
     setMobile(false);
     window.scrollTo({ top: 0, behavior: "instant" });
+  };
+  const openScheduled = async (scheduled) => {
+    if (
+      !window.dispatchEvent(
+        new Event("before-navigation", { cancelable: true }),
+      )
+    )
+      return;
+    const target = await api(`/schedule/${scheduled.id}/attendance`, {
+      method: "POST",
+    });
+    setAttendanceTarget(target);
+    setClassId(String(target.class_id));
+    setPage("attendance");
   };
   if (initial) return <div className="loading">Opening your campus…</div>;
   if (!user)
@@ -307,7 +341,11 @@ export default function App() {
       ...(!isStudent ? ["students"] : []),
       "leaves",
       "calendar",
-      ...(admin(user) ? ["staff", "academics", "notifications"] : []),
+      ...(admin(user)
+        ? ["staff", "academics", "timetable", "notifications"]
+        : user.role === "student" || user.role === "teacher"
+          ? ["timetable"]
+          : []),
       "settings",
     ];
   const props = {
@@ -319,6 +357,8 @@ export default function App() {
     classId,
     setClassId,
     navigate,
+    openScheduled,
+    attendanceTarget,
   };
   return (
     <div
@@ -500,7 +540,11 @@ export default function App() {
                 </select>
               )}
           </div>
+          {page === "overview" && <TodayClasses {...props} />}
           {page === "overview" && <Overview {...props} />}
+          {page === "timetable" && (
+            <Timetable {...props} ui={{ Modal, Field, Select }} />
+          )}
           {page === "attendance" && <Attendance {...props} />}
           {page === "students" && <Students {...props} />}
           {page === "staff" && <StaffDirectory {...props} />}

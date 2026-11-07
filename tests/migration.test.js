@@ -41,3 +41,42 @@ test("staff migration preserves legacy logins and is safe to run again", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("timetable migration preserves legacy attendance and leaves its origin unassigned", () => {
+  const dir = mkdtempSync(join(tmpdir(), "yenepoya-timetable-"));
+  const path = join(dir, "legacy.sqlite");
+  let db;
+  try {
+    db = new DatabaseSync(path);
+    db.exec(
+      "CREATE TABLE teaching_sessions(id INTEGER PRIMARY KEY,subject_id INTEGER NOT NULL,date TEXT NOT NULL,period INTEGER NOT NULL,state TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 0,UNIQUE(subject_id,date,period)); INSERT INTO teaching_sessions VALUES(42,1,'2026-01-10',1,'submitted',7);",
+    );
+    db.close();
+    db = openDatabase(path);
+    assert.deepEqual(
+      { ...db.prepare("SELECT * FROM teaching_sessions WHERE id=42").get() },
+      {
+        id: 42,
+        subject_id: 1,
+        date: "2026-01-10",
+        period: 1,
+        state: "submitted",
+        revision: 7,
+        scheduled_session_id: null,
+      },
+    );
+    db.close();
+    db = openDatabase(path);
+    assert.equal(
+      db.prepare("SELECT COUNT(*) n FROM teaching_sessions").get().n,
+      1,
+    );
+    assert.equal(
+      db.prepare("SELECT COUNT(*) n FROM scheduled_sessions").get().n,
+      0,
+    );
+  } finally {
+    db?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

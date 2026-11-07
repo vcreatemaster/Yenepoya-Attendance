@@ -1,3 +1,4 @@
+import { migrateTimetable } from "./timetable.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, chmodSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -59,6 +60,7 @@ export function openDatabase(
       "CREATE UNIQUE INDEX IF NOT EXISTS users_employee_code ON users(employee_code) WHERE employee_code IS NOT NULL",
     );
   });
+  transaction(db, () => migrateTimetable(db));
   return db;
 }
 export function transaction(db, fn) {
